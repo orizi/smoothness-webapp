@@ -27,9 +27,9 @@ let started = false;
 let accMagBuffer = [];
 let jerkBuffer = [];
 const WINDOW_SIZE = 25;
-const alpha = 0.2;
+const alpha = 0.1; // stronger smoothing
 const baseFreq = 220;
-const maxFreq = 880;
+const maxFreq = 440; // smaller pitch range
 const fill = document.getElementById("fill");
 
 const canvas = document.getElementById("canvas");
@@ -46,14 +46,14 @@ let lastRaw = {x:0, y:0, z:0};
 let accHP = {x:0, y:0, z:0};
 let smoothVariancePrev = 0;
 
-// --- Map smoothness to color (green = smooth, red = jerky) ---
+// Map smoothness to color (green = smooth, red = jerky)
 function smoothnessColor(pct) {
     const r = Math.floor(pct*255);
     const g = Math.floor((1-pct)*255);
     return `rgb(${r},${g},0)`;
 }
 
-// --- Draw trail with color gradient ---
+// Draw trail with color gradient
 function drawTrail(colors) {
     ctx.clearRect(0,0,canvas.width,canvas.height);
     if (trail.length < 2) return;
@@ -67,7 +67,7 @@ function drawTrail(colors) {
     }
 }
 
-// --- Devicemotion handler ---
+// Devicemotion handler
 function handleMotion(event) {
     if (!event.accelerationIncludingGravity) return;
 
@@ -106,10 +106,11 @@ function handleMotion(event) {
     let smoothVariance = alpha*variance + (1-alpha)*smoothVariancePrev;
     smoothVariancePrev = smoothVariance;
 
-    // Audio
+    // Audio: pitch + subtle amplitude modulation
     if (started) {
         let targetFreq = baseFreq + Math.min(smoothVariance*200, maxFreq - baseFreq);
-        oscillator.frequency.value = alpha*targetFreq + (1-alpha)*oscillator.frequency.value;
+        oscillator.frequency.value = 0.05*targetFreq + 0.95*oscillator.frequency.value;
+        gainNode.gain.value = 0.05 + 0.05*smoothVariance; // subtle modulation
     }
 
     // Smoothness bar
@@ -125,12 +126,11 @@ function handleMotion(event) {
     trail.push(pos);
     if (trail.length > TRAIL_LENGTH) trail.shift();
 
-    // Assign colors per trail point based on recent smoothness
-    let colors = trail.map((_,i) => smoothnessColor(pct));
+    let colors = trail.map(() => smoothnessColor(pct));
     drawTrail(colors);
 }
 
-// --- Initialize ---
+// Initialize
 async function init() {
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
         try {
@@ -142,7 +142,7 @@ async function init() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     oscillator = audioCtx.createOscillator();
     gainNode = audioCtx.createGain();
-    oscillator.type = 'sine';
+    oscillator.type = 'triangle'; // softer than sine
     gainNode.gain.value = 0.1;
     oscillator.connect(gainNode).connect(audioCtx.destination);
     oscillator.start();
@@ -151,7 +151,7 @@ async function init() {
     window.addEventListener('devicemotion', handleMotion);
 }
 
-// --- Start on tap ---
+// Start on tap
 document.body.addEventListener('click', () => { init(); });
 </script>
 
