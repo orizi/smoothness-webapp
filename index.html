@@ -23,9 +23,12 @@
 <script>
 let audioCtx, oscillator, gainNode;
 let started = false;
-let accBuffer = [];
+
+// Rolling buffers and parameters
+let accMagBuffer = [];
+let jerkBuffer = [];
 const WINDOW_SIZE = 25;
-const alpha = 0.2;
+const alpha = 0.2;       // variance smoothing
 const baseFreq = 220;
 const maxFreq = 880;
 const fill = document.getElementById("fill");
@@ -35,9 +38,10 @@ const ctx = canvas.getContext("2d");
 let trail = [];
 const TRAIL_LENGTH = 100;
 const SCALE = 15;
+
 const jerkScale = 3;
-const MIN_JERK = 0.08;  // deadzone for small noise
-const alphaHP = 0.8;    // high-pass filter coefficient
+const MIN_JERK = 0.05;
+const alphaHP = 0.8;
 
 let lastRaw = {x:0, y:0, z:0};
 let accHP = {x:0, y:0, z:0};
@@ -69,22 +73,33 @@ function handleMotion(event) {
     accHP.x = alphaHP * (accHP.x + ax - lastRaw.x);
     accHP.y = alphaHP * (accHP.y + ay - lastRaw.y);
     accHP.z = alphaHP * (accHP.z + az - lastRaw.z);
-
     lastRaw = {x: ax, y: ay, z: az};
 
-    let jerk = Math.sqrt(accHP.x**2 + accHP.y**2 + accHP.z**2) * jerkScale;
+    // --- Compute jerk ---
+    let dx = accHP.x;
+    let dy = accHP.y;
+    let dz = accHP.z;
+    let jerk = Math.sqrt(dx*dx + dy*dy + dz*dz) * jerkScale;
 
-    // Deadzone to ignore tiny movements
-    if (jerk < MIN_JERK) jerk = 0;
+    // --- Update rolling buffers ---
+    let accMag = Math.sqrt(accHP.x**2 + accHP.y**2 + accHP.z**2);
+    accMagBuffer.push(accMag);
+    if (accMagBuffer.length > WINDOW_SIZE) accMagBuffer.shift();
 
-    // --- Rolling buffer ---
-    accBuffer.push(jerk);
-    if (accBuffer.length > WINDOW_SIZE) accBuffer.shift();
+    jerkBuffer.push(jerk);
+    if (jerkBuffer.length > WINDOW_SIZE) jerkBuffer.shift();
 
-    let mean = accBuffer.reduce((a,b)=>a+b,0)/accBuffer.length;
-    let variance = accBuffer.reduce((a,b)=>a+(b-mean)**2,0)/accBuffer.length;
+    let meanAcc = accMagBuffer.reduce((a,b)=>a+b,0)/accMagBuffer.length;
 
-    // --- Smooth variance ---
+    // --- Intentionality factor ---
+    let intentFactor = jerk === 0 ? 0 : Math.min(1, meanAcc / (jerk + 0.01));
+
+    let scaledJerk = jerk * intentFactor;
+    if (scaledJerk < MIN_JERK) scaledJerk = 0;
+
+    // --- Variance & smoothing ---
+    let meanJerk = jerkBuffer.reduce((a,b)=>a+b,0)/jerkBuffer.length;
+    let variance = jerkBuffer.reduce((a,b)=>a+(b-meanJerk)**2,0)/jerkBuffer.length;
     let smoothVariance = alpha*variance + (1-alpha)*smoothVariancePrev;
     smoothVariancePrev = smoothVariance;
 
@@ -111,7 +126,7 @@ function handleMotion(event) {
 
 // --- Initialize ---
 async function init() {
-    // Request motion permission on iOS/Android if needed
+    // Request motion permission if needed
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
         try {
             const response = await DeviceMotionEvent.requestPermission();
