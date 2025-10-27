@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dance Fluidity Feedback</title>
+<style>
+  body { font-family: sans-serif; text-align: center; margin: 1rem; }
+  h1 { margin-bottom: 0.5rem; }
+  p { margin: 0.2rem 0 1rem 0; font-size: 1rem; }
+  #smoothnessBar { width: 80%; height: 20px; background: #ddd; margin: 10px auto; border-radius: 10px; overflow: hidden; }
+  #fill { height: 100%; width: 0%; background: #4caf50; transition: width 0.1s; }
+  #canvas { border: 1px solid #333; margin: 10px auto; display: block; background: #f9f9f9; }
+</style>
+</head>
+<body>
+
+<h1>Dance Fluidity Feedback</h1>
+<p>Tap anywhere to start. Smooth = calm tone, jerky = higher tone.</p>
+
+<div id="smoothnessBar"><div id="fill"></div></div>
+<canvas id="canvas" width="300" height="300"></canvas>
+
+<script>
+let audioCtx, oscillator, gainNode;
+let started = false;
+let accBuffer = [];
+const WINDOW_SIZE = 25; // rolling buffer
+const alpha = 0.2;      // tone smoothing
+const baseFreq = 220;
+const maxFreq = 880;
+const fill = document.getElementById("fill");
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+let trail = [];
+const TRAIL_LENGTH = 100;
+const SCALE = 15; // trail scale
+const jerkScale = 30;
+
+let last = null;
+
+// --- Draw trail ---
+function drawTrail() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.beginPath();
+    for (let i=0; i<trail.length; i++) {
+        let p = trail[i];
+        if (i===0) ctx.moveTo(p.x,p.y);
+        else ctx.lineTo(p.x,p.y);
+    }
+    ctx.strokeStyle = 'blue';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+}
+
+// --- Devicemotion handler ---
+function handleMotion(event) {
+    if (!event.accelerationIncludingGravity) return;
+
+    let ax = event.accelerationIncludingGravity.x || 0;
+    let ay = event.accelerationIncludingGravity.y || 0;
+    let az = event.accelerationIncludingGravity.z || 0;
+
+    // --- Compute jerk ---
+    if (!last) last = {x: ax, y: ay, z: az};
+    let dx = ax - last.x;
+    let dy = ay - last.y;
+    let dz = az - last.z;
+    last = {x: ax, y: ay, z: az};
+
+    let jerk = Math.sqrt(dx*dx + dy*dy + dz*dz) * jerkScale;
+
+    // --- Rolling buffer ---
+    accBuffer.push(jerk);
+    if (accBuffer.length > WINDOW_SIZE) accBuffer.shift();
+
+    let mean = accBuffer.reduce((a,b)=>a+b,0)/accBuffer.length;
+    let variance = accBuffer.reduce((a,b)=>a+(b-mean)**2,0)/accBuffer.length;
+
+    // --- Audio frequency ---
+    if (started) {
+        let targetFreq = baseFreq + Math.min(variance*1000, maxFreq - baseFreq);
+        oscillator.frequency.value = alpha*targetFreq + (1-alpha)*oscillator.frequency.value;
+    }
+
+    // --- Smoothness bar ---
+    let pct = Math.min(1, variance/2);
+    fill.style.width = (pct*100)+'%';
+    fill.style.background = `rgb(${Math.floor(pct*255)},${Math.floor((1-pct)*200)},0)`;
+
+    // --- Trail ---
+    let pos = {
+        x: canvas.width/2 + ax*SCALE*5,
+        y: canvas.height/2 - ay*SCALE*5
+    };
+    trail.push(pos);
+    if (trail.length > TRAIL_LENGTH) trail.shift();
+    drawTrail();
+}
+
+// --- Initialize everything ---
+async function init() {
+    // Request motion permission
+    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        try {
+            const response = await DeviceMotionEvent.requestPermission();
+            if (response !== 'granted') {
+                alert("Motion permission denied. Cannot detect movement.");
+                return;
+            }
+        } catch (err) {
+            alert("Motion permission error: " + err);
+            return;
+        }
+    }
+
+    // Setup audio
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    oscillator = audioCtx.createOscillator();
+    gainNode = audioCtx.createGain();
+    oscillator.type = 'sine';
+    gainNode.gain.value = 0.1;
+    oscillator.connect(gainNode).connect(audioCtx.destination);
+    oscillator.start();
+    started = true;
+
+    // Start listening
+    window.addEventListener('devicemotion', handleMotion);
+}
+
+// --- Start on tap ---
+document.body.addEventListener('click', () => {
+    init();
+});
+</script>
+
+</body>
+</html>
