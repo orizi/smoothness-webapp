@@ -24,8 +24,8 @@
 let audioCtx, oscillator, gainNode;
 let started = false;
 let accBuffer = [];
-const WINDOW_SIZE = 25; // rolling buffer
-const alpha = 0.2;      // tone smoothing
+const WINDOW_SIZE = 25;
+const alpha = 0.2;
 const baseFreq = 220;
 const maxFreq = 880;
 const fill = document.getElementById("fill");
@@ -34,10 +34,14 @@ const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 let trail = [];
 const TRAIL_LENGTH = 100;
-const SCALE = 15; 
-const jerkScale = 5; // reduced sensitivity
+const SCALE = 15;
+const jerkScale = 3;
+const MIN_JERK = 0.08;  // deadzone for small noise
+const alphaHP = 0.8;    // high-pass filter coefficient
 
-let last = null;
+let lastRaw = {x:0, y:0, z:0};
+let accHP = {x:0, y:0, z:0};
+let smoothVariancePrev = 0;
 
 // --- Draw trail ---
 function drawTrail() {
@@ -61,14 +65,17 @@ function handleMotion(event) {
     let ay = event.accelerationIncludingGravity.y || 0;
     let az = event.accelerationIncludingGravity.z || 0;
 
-    // --- Compute jerk ---
-    if (!last) last = {x: ax, y: ay, z: az};
-    let dx = ax - last.x;
-    let dy = ay - last.y;
-    let dz = az - last.z;
-    last = {x: ax, y: ay, z: az};
+    // --- High-pass filter to remove gravity / slow drift ---
+    accHP.x = alphaHP * (accHP.x + ax - lastRaw.x);
+    accHP.y = alphaHP * (accHP.y + ay - lastRaw.y);
+    accHP.z = alphaHP * (accHP.z + az - lastRaw.z);
 
-    let jerk = Math.sqrt(dx*dx + dy*dy + dz*dz) * jerkScale;
+    lastRaw = {x: ax, y: ay, z: az};
+
+    let jerk = Math.sqrt(accHP.x**2 + accHP.y**2 + accHP.z**2) * jerkScale;
+
+    // Deadzone to ignore tiny movements
+    if (jerk < MIN_JERK) jerk = 0;
 
     // --- Rolling buffer ---
     accBuffer.push(jerk);
@@ -77,15 +84,18 @@ function handleMotion(event) {
     let mean = accBuffer.reduce((a,b)=>a+b,0)/accBuffer.length;
     let variance = accBuffer.reduce((a,b)=>a+(b-mean)**2,0)/accBuffer.length;
 
-    // --- Smooth audio ---
+    // --- Smooth variance ---
+    let smoothVariance = alpha*variance + (1-alpha)*smoothVariancePrev;
+    smoothVariancePrev = smoothVariance;
+
+    // --- Audio ---
     if (started) {
-        // scale variance down for more reasonable pitch changes
-        let targetFreq = baseFreq + Math.min(variance*200, maxFreq - baseFreq);
+        let targetFreq = baseFreq + Math.min(smoothVariance*200, maxFreq - baseFreq);
         oscillator.frequency.value = alpha*targetFreq + (1-alpha)*oscillator.frequency.value;
     }
 
     // --- Smoothness bar ---
-    let pct = Math.min(1, variance/5); // scale down for visibility
+    let pct = Math.min(1, smoothVariance / 5); 
     fill.style.width = (pct*100)+'%';
     fill.style.background = `rgb(${Math.floor(pct*255)},${Math.floor((1-pct)*200)},0)`;
 
