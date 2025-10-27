@@ -34,8 +34,8 @@ const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 let trail = [];
 const TRAIL_LENGTH = 100;
-const SCALE = 15; // trail scale
-const jerkScale = 30;
+const SCALE = 15; 
+const jerkScale = 5; // reduced sensitivity
 
 let last = null;
 
@@ -77,14 +77,15 @@ function handleMotion(event) {
     let mean = accBuffer.reduce((a,b)=>a+b,0)/accBuffer.length;
     let variance = accBuffer.reduce((a,b)=>a+(b-mean)**2,0)/accBuffer.length;
 
-    // --- Audio frequency ---
+    // --- Smooth audio ---
     if (started) {
-        let targetFreq = baseFreq + Math.min(variance*1000, maxFreq - baseFreq);
+        // scale variance down for more reasonable pitch changes
+        let targetFreq = baseFreq + Math.min(variance*200, maxFreq - baseFreq);
         oscillator.frequency.value = alpha*targetFreq + (1-alpha)*oscillator.frequency.value;
     }
 
     // --- Smoothness bar ---
-    let pct = Math.min(1, variance/2);
+    let pct = Math.min(1, variance/5); // scale down for visibility
     fill.style.width = (pct*100)+'%';
     fill.style.background = `rgb(${Math.floor(pct*255)},${Math.floor((1-pct)*200)},0)`;
 
@@ -98,14 +99,14 @@ function handleMotion(event) {
     drawTrail();
 }
 
-// --- Initialize everything ---
+// --- Initialize ---
 async function init() {
-    // Request motion permission
+    // Request motion permission on iOS/Android if needed
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
         try {
             const response = await DeviceMotionEvent.requestPermission();
             if (response !== 'granted') {
-                alert("Motion permission denied. Cannot detect movement.");
+                alert("Motion permission denied.");
                 return;
             }
         } catch (err) {
@@ -114,7 +115,7 @@ async function init() {
         }
     }
 
-    // Setup audio
+    // Audio setup
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     oscillator = audioCtx.createOscillator();
     gainNode = audioCtx.createGain();
@@ -124,7 +125,7 @@ async function init() {
     oscillator.start();
     started = true;
 
-    // Start listening
+    // Start motion listener
     window.addEventListener('devicemotion', handleMotion);
 }
 
