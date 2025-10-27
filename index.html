@@ -15,7 +15,7 @@
 <body>
 
 <h1>Dance Fluidity Feedback</h1>
-<p>Tap anywhere to start. Smooth = calm tone, jerky = higher tone.</p>
+<p>Tap anywhere to start. Green trail = smooth, red = jerky.</p>
 
 <div id="smoothnessBar"><div id="fill"></div></div>
 <canvas id="canvas" width="300" height="300"></canvas>
@@ -24,11 +24,10 @@
 let audioCtx, oscillator, gainNode;
 let started = false;
 
-// Rolling buffers and parameters
 let accMagBuffer = [];
 let jerkBuffer = [];
 const WINDOW_SIZE = 25;
-const alpha = 0.2;       // variance smoothing
+const alpha = 0.2;
 const baseFreq = 220;
 const maxFreq = 880;
 const fill = document.getElementById("fill");
@@ -47,18 +46,25 @@ let lastRaw = {x:0, y:0, z:0};
 let accHP = {x:0, y:0, z:0};
 let smoothVariancePrev = 0;
 
-// --- Draw trail ---
-function drawTrail() {
+// --- Map smoothness to color (green = smooth, red = jerky) ---
+function smoothnessColor(pct) {
+    const r = Math.floor(pct*255);
+    const g = Math.floor((1-pct)*255);
+    return `rgb(${r},${g},0)`;
+}
+
+// --- Draw trail with color gradient ---
+function drawTrail(colors) {
     ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.beginPath();
-    for (let i=0; i<trail.length; i++) {
-        let p = trail[i];
-        if (i===0) ctx.moveTo(p.x,p.y);
-        else ctx.lineTo(p.x,p.y);
+    if (trail.length < 2) return;
+    for (let i=1; i<trail.length; i++) {
+        ctx.beginPath();
+        ctx.moveTo(trail[i-1].x, trail[i-1].y);
+        ctx.lineTo(trail[i].x, trail[i].y);
+        ctx.strokeStyle = colors[i] || 'blue';
+        ctx.lineWidth = 2;
+        ctx.stroke();
     }
-    ctx.strokeStyle = 'blue';
-    ctx.lineWidth = 2;
-    ctx.stroke();
 }
 
 // --- Devicemotion handler ---
@@ -69,19 +75,17 @@ function handleMotion(event) {
     let ay = event.accelerationIncludingGravity.y || 0;
     let az = event.accelerationIncludingGravity.z || 0;
 
-    // --- High-pass filter to remove gravity / slow drift ---
+    // High-pass filter
     accHP.x = alphaHP * (accHP.x + ax - lastRaw.x);
     accHP.y = alphaHP * (accHP.y + ay - lastRaw.y);
     accHP.z = alphaHP * (accHP.z + az - lastRaw.z);
     lastRaw = {x: ax, y: ay, z: az};
 
-    // --- Compute jerk ---
     let dx = accHP.x;
     let dy = accHP.y;
     let dz = accHP.z;
     let jerk = Math.sqrt(dx*dx + dy*dy + dz*dz) * jerkScale;
 
-    // --- Update rolling buffers ---
     let accMag = Math.sqrt(accHP.x**2 + accHP.y**2 + accHP.z**2);
     accMagBuffer.push(accMag);
     if (accMagBuffer.length > WINDOW_SIZE) accMagBuffer.shift();
@@ -91,56 +95,50 @@ function handleMotion(event) {
 
     let meanAcc = accMagBuffer.reduce((a,b)=>a+b,0)/accMagBuffer.length;
 
-    // --- Intentionality factor ---
+    // Intentionality factor
     let intentFactor = jerk === 0 ? 0 : Math.min(1, meanAcc / (jerk + 0.01));
-
     let scaledJerk = jerk * intentFactor;
     if (scaledJerk < MIN_JERK) scaledJerk = 0;
 
-    // --- Variance & smoothing ---
+    // Variance & smoothing
     let meanJerk = jerkBuffer.reduce((a,b)=>a+b,0)/jerkBuffer.length;
     let variance = jerkBuffer.reduce((a,b)=>a+(b-meanJerk)**2,0)/jerkBuffer.length;
     let smoothVariance = alpha*variance + (1-alpha)*smoothVariancePrev;
     smoothVariancePrev = smoothVariance;
 
-    // --- Audio ---
+    // Audio
     if (started) {
         let targetFreq = baseFreq + Math.min(smoothVariance*200, maxFreq - baseFreq);
         oscillator.frequency.value = alpha*targetFreq + (1-alpha)*oscillator.frequency.value;
     }
 
-    // --- Smoothness bar ---
+    // Smoothness bar
     let pct = Math.min(1, smoothVariance / 5); 
     fill.style.width = (pct*100)+'%';
-    fill.style.background = `rgb(${Math.floor(pct*255)},${Math.floor((1-pct)*200)},0)`;
+    fill.style.background = smoothnessColor(pct);
 
-    // --- Trail ---
+    // Trail
     let pos = {
         x: canvas.width/2 + ax*SCALE*5,
         y: canvas.height/2 - ay*SCALE*5
     };
     trail.push(pos);
     if (trail.length > TRAIL_LENGTH) trail.shift();
-    drawTrail();
+
+    // Assign colors per trail point based on recent smoothness
+    let colors = trail.map((_,i) => smoothnessColor(pct));
+    drawTrail(colors);
 }
 
 // --- Initialize ---
 async function init() {
-    // Request motion permission if needed
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
         try {
             const response = await DeviceMotionEvent.requestPermission();
-            if (response !== 'granted') {
-                alert("Motion permission denied.");
-                return;
-            }
-        } catch (err) {
-            alert("Motion permission error: " + err);
-            return;
-        }
+            if (response !== 'granted') { alert("Motion permission denied."); return; }
+        } catch (err) { alert("Motion permission error: " + err); return; }
     }
 
-    // Audio setup
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     oscillator = audioCtx.createOscillator();
     gainNode = audioCtx.createGain();
@@ -150,14 +148,11 @@ async function init() {
     oscillator.start();
     started = true;
 
-    // Start motion listener
     window.addEventListener('devicemotion', handleMotion);
 }
 
 // --- Start on tap ---
-document.body.addEventListener('click', () => {
-    init();
-});
+document.body.addEventListener('click', () => { init(); });
 </script>
 
 </body>
